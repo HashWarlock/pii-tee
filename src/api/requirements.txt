@@ -1,0 +1,11 @@
+fastapi[standard]==0.114.2
+uvicorn[standard]==0.30.6
+presidio-analyzer==2.2.355
+presidio-anonymizer==2.2.355
+pydantic==2.9.2
+redis==5.0.8
+dstack==0.2.1
+eth-utils
+web3
+cryptography
+dstack-sdk
