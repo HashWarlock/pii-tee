@@ -29,7 +29,7 @@ services:
       - redis_network
 
   pii-api: 
-    image: hashwarlock/pii-api:v0.0.1
+    image: hashwarlock/pii-api:v0.0.22
     container_name: pii-api
     restart: always
     ports:
@@ -37,6 +37,7 @@ services:
     networks:
       - redis_network
     environment:
+      - CLIENT_URL=${CLIENT_URL:-http://client-app:3000}
       - REDIS_HOSTNAME=redis
       - REDIS_PORT=6379
       - REDIS_KEY=${REDIS_PASSWORD}
@@ -47,33 +48,39 @@ services:
       - /var/run/tappd.sock:/var/run/tappd.sock
 
   client-app:
-    image: hashwarlock/pii-client:v0.0.3
-    container_name: client-app
+    image: hashwarlock/pii-client:v0.0.51
+    container_name: pii-tee-frontend
     restart: always
-    expose:
-      - "8000"
     ports:
-      - "8000:8000" # Use environment variable for IP
+      - "${CLIENT_PORT:-3000}:3000" # Frontend accessible on port 3000
     networks:
       - redis_network
     environment:
-      - REDPILL_API_KEY=${REDPILL_API_KEY}
-      - REDPILL_ENDPOINT=${REDPILL_ENDPOINT}
-      - REDPILL_MODEL_NAME=${REDPILL_MODEL_NAME:-phala/deepseek-chat-v3-0324}
-      - API_URL=http://pii-api
-      - TEXTUAL_HOST=0.0.0.0
-      - TEXTUAL_PORT=8000
-      - TEXTUAL_PUBLIC_URL=https://bd8b131c1b016f0572105045393c4f0a63180fed-8000.teehouse.phatfn.xyz
-      - SESSION_FILE_PATH=/app/sessions/.pii_tee_session
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://pii-api:80
+      - NEXT_TELEMETRY_DISABLED=1
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
       - pii-api
-    volumes:
-      - /var/run/tappd.sock:/var/run/tappd.sock
-      - session_data:/app/sessions
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   redis_network:
 
 volumes:
   redis_data:
-  session_data:

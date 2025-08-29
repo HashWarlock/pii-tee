@@ -1,80 +1,84 @@
+# Development Docker Compose Configuration
+# For production deployment, use: docker-compose -f docker-compose.prod.yml up -d
+
 services:
   redis:
     image: redis:7.4-alpine
-    container_name: redis_production
-    restart: always
+    container_name: redis_dev
+    restart: unless-stopped
     ports:
-      - "${LISTEN_IP:-127.0.0.1}:6379:6379" # Use environment variable for IP
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis_data:/data # Persist Redis data in a named volume
+      - redis_dev_data:/data
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD} # Set a strong password for Redis
-      - REDIS_MAXMEMORY=2gb # Limit memory usage to prevent OOM issues
-      - REDIS_MAXMEMORY_POLICY=allkeys-lru # Evict least recently used keys when memory is full
-    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
-    sysctls:
-      - net.core.somaxconn=1024 # Increase the maximum number of connections
-    ulimits:
-      nofile:
-        soft: 65535 # Increase file descriptor limits
-        hard: 65535
-    security_opt:
-      - no-new-privileges:true # Prevent privilege escalation
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m" # Limit log size
-        max-file: "3" # Rotate logs after 3 files
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-devpassword123}
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD:-devpassword123}
     networks:
-      - redis_network
+      - pii_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  pii-api: 
-    image: hashwarlock/pii-api:latest
-    container_name: pii-api
-    restart: always
+  pii-api:
+    build:
+      context: ./src/api
+      dockerfile: Dockerfile
+    image: pii-api:dev
+    container_name: pii-api-dev
+    restart: unless-stopped
     ports:
-      - "8080:80" # Expose API on host 8080 -> container 80
+      - "${API_PORT:-8080}:80"
     networks:
-      - redis_network
+      - pii_network
     environment:
       - REDIS_HOSTNAME=redis
       - REDIS_PORT=6379
-      - REDIS_KEY=${REDIS_PASSWORD}
+      - REDIS_KEY=${REDIS_PASSWORD:-devpassword123}
       - REDIS_DB=0
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
     depends_on:
       - redis
     volumes:
-      - /var/run/dstack.sock:/var/run/dstack.sock
+      - ./src/api:/app  # Mount source for hot reload
+      - /var/run/dstack.sock:/var/run/dstack.sock  # TEE socket
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   client-app:
     build:
       context: ./src/client_app
-      dockerfile: Dockerfile
-    container_name: client-app
-    restart: always
-    expose:
-      - 8000
+      dockerfile: Dockerfile.dev
+    image: pii-frontend:dev
+    container_name: pii-frontend-dev
+    restart: unless-stopped
     ports:
-      - "8000:8000" # Use environment variable for IP
+      - "${CLIENT_PORT:-3000}:3000"
     networks:
-      - redis_network
+      - pii_network
     environment:
-      - REDPILL_API_KEY=${REDPILL_API_KEY}
-      - REDPILL_ENDPOINT=${REDPILL_ENDPOINT}
-      - REDPILL_MODEL_NAME=${REDPILL_MODEL_NAME:-}
-      - API_URL=http://pii-api
-      - TEXTUAL_HOST=0.0.0.0
-      - TEXTUAL_PORT=8000
-      - TEXTUAL_PUBLIC_URL=http://localhost:8000
-      - SESSION_FILE_PATH=/app/sessions/.pii_tee_session
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_TELEMETRY_DISABLED=1
     depends_on:
       - pii-api
     volumes:
-      - /var/run/dstack.sock:/var/run/dstack.sock
-      - ./sessions:/app/sessions
+      - ./src/client_app:/app  # Mount source for hot reload
+      - /app/node_modules      # Prevent node_modules from being overwritten
+      - /app/.next             # Prevent .next from being overwritten
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
-  redis_network:
+  pii_network:
+    driver: bridge
 
 volumes:
-  redis_data:
+  redis_dev_data:

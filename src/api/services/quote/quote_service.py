@@ -2,19 +2,23 @@ import json
 import os
 import logging
 from typing import Dict, Optional, Tuple
+import base64
 
 import eth_utils
 import web3
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.backends import default_backend
+from cryptography.exceptions import InvalidSignature
 from dstack_sdk import TappdClient
 from eth_account.messages import encode_defunct
+from eth_account import Account
 
 logger = logging.getLogger(__name__)
 
 ED25519 = "ed25519"
 ECDSA = "ecdsa"
-SIGNING_METHOD = os.getenv("SIGNING_METHOD", ED25519)
+SIGNING_METHOD = os.getenv("SIGNING_METHOD", ECDSA)  # Default to ECDSA
 
 
 class QuoteService:
@@ -140,9 +144,11 @@ class QuoteService:
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
-        self.public_key = self.public_key_bytes.hex()
-        self.signing_address = self.public_key
-        logger.info("Ed25519 public key generated: %s...", self.public_key[:16])
+        # Store public key as base64 for easier transmission and verification
+        self.public_key = base64.b64encode(self.public_key_bytes).decode('utf-8')
+        self.signing_address = self.public_key_bytes.hex()
+        logger.info("Ed25519 public key (base64): %s...", self.public_key[:16])
+        logger.info("Ed25519 signing address (hex): %s...", self.signing_address[:16])
         logger.info("Ed25519 initialization completed")
 
     def _init_ecdsa(self):
@@ -153,10 +159,10 @@ class QuoteService:
         self.signing_address = self.raw_acct.address
         logger.info("ECDSA account created, address: %s", self.signing_address)
         
-        self.public_key = eth_utils.keccak(
-            self.raw_acct._key_obj.public_key.to_bytes()
-        ).hex()
-        logger.info("ECDSA public key generated: %s...", self.public_key[:16])
+        # For ECDSA, the "public key" for verification is actually the address
+        # since we use recover_message to verify signatures
+        self.public_key = self.signing_address
+        logger.info("ECDSA public key (address): %s", self.public_key)
         logger.info("ECDSA initialization completed")
 
     def _get_quote(self, public_key: str) -> Tuple[str, Dict]:
@@ -174,6 +180,13 @@ class QuoteService:
             
             logger.info("Intel quote obtained successfully")
             return result.quote, event_log
+        except FileNotFoundError as e:
+            # In development mode without TEE, return mock data
+            logger.warning("TEE socket not available (development mode): %s", str(e))
+            logger.info("Returning mock quote data for development")
+            mock_quote = "MOCK_QUOTE_" + base64.b64encode(public_key.encode()).decode()[:32]
+            mock_event_log = {"type": "mock", "timestamp": "development"}
+            return mock_quote, mock_event_log
         except Exception as e:
             logger.exception("Error getting Intel TDX quote: %s", str(e))
             raise
@@ -212,6 +225,15 @@ class QuoteService:
                 finally:
                     conn.close()
                     logger.info("HTTP connection closed")
+        except (FileNotFoundError, socket.error) as e:
+            # In development mode without TEE, return mock data
+            logger.warning("Tappd socket not available (development mode): %s", str(e))
+            logger.info("Returning mock Tappd info for development")
+            return {
+                "type": "mock",
+                "version": "development",
+                "public_key": self.public_key
+            }
         except Exception as e:
             logger.exception("Error getting Tappd info: %s", str(e))
             raise
@@ -234,3 +256,93 @@ class QuoteService:
         signature = f"0x{signed_message.signature.hex()}"
         logger.info("ECDSA signature generated successfully")
         return signature
+
+    def verify_signature(self, content: str, signature: str, public_key: str) -> bool:
+        """Verify a signature for given content using the appropriate method."""
+        logger.info("=== Starting signature verification ===")
+        logger.info("Signing method: %s", self.signing_method)
+        logger.info("Content length: %d", len(content))
+        logger.info("Signature length: %d", len(signature))
+        logger.info("Public key length: %d", len(public_key))
+        
+        try:
+            if self.signing_method == ED25519:
+                return self._verify_ed25519(content, signature, public_key)
+            elif self.signing_method == ECDSA:
+                return self._verify_ecdsa(content, signature, public_key)
+            else:
+                logger.error("Unsupported signing method for verification: %s", self.signing_method)
+                return False
+        except Exception as e:
+            logger.exception("Error during signature verification: %s", str(e))
+            return False
+
+    def _verify_ed25519(self, content: str, signature: str, public_key_str: str) -> bool:
+        """Verify Ed25519 signature."""
+        logger.info("Verifying Ed25519 signature...")
+        logger.info("Public key (first 20 chars): %s...", public_key_str[:20])
+        logger.info("Signature (first 20 chars): %s...", signature[:20])
+        
+        try:
+            # Public key is already in base64 format from init
+            public_key_bytes = base64.b64decode(public_key_str)
+            logger.info("Public key decoded, bytes length: %d", len(public_key_bytes))
+            
+            # Create public key object
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+            
+            # Convert signature from hex to bytes
+            signature_bytes = bytes.fromhex(signature)
+            logger.info("Signature converted to bytes, length: %d", len(signature_bytes))
+            
+            # Verify the signature
+            message_bytes = content.encode("utf-8")
+            public_key.verify(signature_bytes, message_bytes)
+            
+            logger.info("Ed25519 signature verification successful")
+            return True
+            
+        except InvalidSignature:
+            logger.warning("Ed25519 signature verification failed: Invalid signature")
+            return False
+        except Exception as e:
+            logger.exception("Error verifying Ed25519 signature: %s", str(e))
+            return False
+
+    def _verify_ecdsa(self, content: str, signature: str, public_key_str: str) -> bool:
+        """Verify ECDSA signature."""
+        logger.info("Verifying ECDSA signature...")
+        logger.info("Public key (address): %s", public_key_str)
+        logger.info("Signature: %s...", signature[:20] if len(signature) > 20 else signature)
+        
+        try:
+            # Recover the address from the signature
+            message = encode_defunct(text=content)
+            
+            # Remove '0x' prefix if present from signature
+            if signature.startswith('0x'):
+                signature = signature[2:]
+            
+            # Convert signature to bytes
+            signature_bytes = bytes.fromhex(signature)
+            logger.info("Signature bytes length: %d", len(signature_bytes))
+            
+            # Recover the signer's address
+            recovered_address = Account.recover_message(message, signature=signature_bytes)
+            logger.info("Recovered address: %s", recovered_address)
+            
+            # For ECDSA, public_key_str is the Ethereum address
+            # Normalize both addresses for comparison (case-insensitive)
+            recovered_normalized = recovered_address.lower()
+            expected_normalized = public_key_str.lower()
+            
+            is_valid = recovered_normalized == expected_normalized
+            logger.info("ECDSA verification result: %s", is_valid)
+            logger.info("  Recovered: %s", recovered_normalized)
+            logger.info("  Expected:  %s", expected_normalized)
+            
+            return is_valid
+            
+        except Exception as e:
+            logger.exception("Error verifying ECDSA signature: %s", str(e))
+            return False

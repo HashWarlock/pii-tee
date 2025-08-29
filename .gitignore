@@ -1,3 +1,114 @@
+# Environment variables
 .env*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+.turbo/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.cursor/
+.claude/
+.nova/
+.fleet/
+*.sublime-*
+
+# Docker
+docker-compose.override.yml
+.dockerignore.local
+
+# Redis
+dump.rdb
+*.rdb
+redis-data/
+
+# Logs
+logs/
+*.log
+log/
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+.benchmarks/
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+.Spotlight-V100
+.Trashes
+._*
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+.temp/
+tmp/
+temp/
+
+# Project specific
 specs/
 .phala-cloud/
+.taskmaster
+.mcp.json
+.dstack/
+.flox/
+
+# Development environment
+.direnv/
+.envrc.local
+
+# Keep git tracking for important files
+!.gitignore
+!.gitkeep

@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Optional, Dict
+from typing import Optional, Dict, Any, Tuple
 
 from services.state.state_service import StateService
 from services.presidio.presidio_service import PresidioService
@@ -10,15 +10,37 @@ logger = logging.getLogger(__name__)
 
 
 class ToolkitService:
-    def __init__(self, presidio_service: PresidioService, state_service: StateService):
+    """Service for coordinating text anonymization with state management and TEE attestation."""
+    
+    def __init__(self, presidio_service: PresidioService, state_service: StateService) -> None:
+        """
+        Initialize the toolkit service.
+        
+        Args:
+            presidio_service: Service for PII detection and anonymization
+            state_service: Service for managing session state
+        """
         logger.info("Initializing ToolkitService with presidio_service=%s, state_service=%s", 
                    type(presidio_service).__name__, type(state_service).__name__)
-        self.presidio_service = presidio_service
-        self.state_service = state_service
+        self.presidio_service: PresidioService = presidio_service
+        self.state_service: StateService = state_service
 
     def anonymize(self, text: str, session_id: Optional[str] = None, 
-                  language: Optional[str] = "en") -> Dict:
-        """Anonymize the given text using Presidio service with quote and signature"""
+                  language: Optional[str] = "en") -> Dict[str, Any]:
+        """
+        Anonymize PII in text with cryptographic signatures.
+        
+        Args:
+            text: Text to anonymize
+            session_id: Optional session ID for consistent anonymization
+            language: Language code for text processing
+        
+        Returns:
+            Dictionary containing anonymized text, session ID, and signatures
+        
+        Raises:
+            Exception: On anonymization or signature generation errors
+        """
 
         logger.info("=== Starting anonymize operation ===")
         logger.info("Input text length: %d characters", len(text))
@@ -69,10 +91,23 @@ class ToolkitService:
             return response
         except Exception as e:
             logger.exception("Error during anonymization for session_id %s: %s", session_id, str(e))
-            raise e
+            raise
 
-    def deanonymize(self, text: str, session_id: str) -> Dict:
-        """Deanonymize the given text using Presidio service with quote and signature"""
+    def deanonymize(self, text: str, session_id: str) -> Dict[str, Any]:
+        """
+        Restore original PII in anonymized text.
+        
+        Args:
+            text: Anonymized text to restore
+            session_id: Session ID with stored entity mappings
+        
+        Returns:
+            Dictionary containing original text and signatures
+        
+        Raises:
+            ValueError: If session is not found
+            Exception: On deanonymization errors
+        """
 
         logger.info("=== Starting deanonymize operation ===")
         logger.info("Input text length: %d characters", len(text))
@@ -114,10 +149,22 @@ class ToolkitService:
             return response
         except Exception as e:
             logger.exception("Error during deanonymization for session_id %s: %s", session_id, str(e))
-            raise e
+            raise
 
-    def _generate_quote_and_signature(self, content: str, session_id: str) -> Dict:
-        """Generate quote and sign the content for a session."""
+    def _generate_quote_and_signature(self, content: str, session_id: str) -> Dict[str, Optional[str]]:
+        """
+        Generate TEE quote and cryptographic signature for content.
+        
+        Args:
+            content: Content to sign
+            session_id: Session ID for logging
+        
+        Returns:
+            Dictionary with quote, signature, public key, and signing method
+        
+        Raises:
+            Exception: On quote or signature generation errors
+        """
         logger.info("Starting quote and signature generation for session: %s", session_id)
         logger.info("Content to sign length: %d characters", len(content))
         

@@ -1,0 +1,26 @@
+# Development Dockerfile with hot reload support
+FROM --platform=linux/amd64 node:lts-alpine
+
+# Install dependencies for development
+RUN apk add --no-cache libc6-compat curl
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install all dependencies (including devDependencies)
+RUN npm ci
+
+# Copy application code
+COPY . .
+
+# Expose port
+EXPOSE 3000
+
+ENV NODE_ENV=development
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+# Run in development mode with hot reload
+CMD ["npm", "run", "dev"]
